@@ -1,1863 +1,1099 @@
-# Design Document: TrustScan AI
+# Design Document: Dukaan AI
 
 ## Overview
 
-TrustScan AI is a comprehensive Product Transparency & Lifecycle Intelligence Platform that addresses critical information asymmetry in retail markets through AI-powered verification, intelligent inventory management, and market intelligence. The system serves three primary user groups: end customers seeking product authenticity verification, store owners managing inventory and supplier relationships, and manufacturers tracking supply chain integrity.
+Dukaan AI is an AI-powered pricing and inventory intelligence platform that helps marketplace sellers optimize their pricing strategies and inventory decisions. The system architecture follows a microservices pattern with distinct components for price monitoring, pricing recommendations, demand forecasting, and analytics.
 
-### Core Value Propositions
+The platform integrates with multiple marketplace APIs (Amazon, eBay, Shopify) to collect competitor pricing data and automate price updates. Machine learning models power the demand forecasting and pricing optimization engines, while a real-time analytics dashboard provides actionable insights to sellers.
 
-**For Customers:**
-- Instant product verification through QR scanning or visual recognition
-- Trust Score combining authenticity, tampering detection, freshness analysis, and social proof
-- Category-specific transparency information (electronics, FMCG, medicine, cosmetics)
-- Multilingual support and voice interface for accessibility
+### Key Design Principles
 
-**For Store Owners:**
-- Automated stock verification to detect counterfeits before accepting delivery
-- AI-powered expiry management with dynamic pricing recommendations
-- Market intelligence and demand forecasting for inventory optimization
-- AI Copilot providing retail operation guidance and risk analysis
-- Verification Badge to build customer trust
-
-**For Manufacturers:**
-- Supply chain transparency and grey market detection
-- Instant recall management with stakeholder notifications
-- Regional price analysis to identify unauthorized distribution
-- Product lifecycle tracking through digital twins
-
-### Technical Approach
-
-The platform leverages a hybrid architecture combining:
-- **Mobile-first applications** (React Native) for customers and store owners
-- **Serverless backend** (AWS Lambda, API Gateway) for scalability and cost efficiency
-- **AI/ML services** (AWS Bedrock, Rekognition, SageMaker) for computer vision, NLP, and predictive analytics
-- **NoSQL database** (DynamoDB) for high-performance product data storage
-- **Real-time processing** (WebSockets, EventBridge) for alerts and notifications
-- **CDN delivery** (CloudFront) for global image and content distribution
-
+1. **Modularity**: Separate concerns into distinct services (monitoring, pricing, forecasting, analytics)
+2. **Real-time Processing**: Use event-driven architecture for immediate alerts and updates
+3. **Scalability**: Design for horizontal scaling to support growing user base
+4. **Data Integrity**: Ensure consistency across distributed components
+5. **Security**: Encrypt sensitive data and implement robust authentication
+6. **Testability**: Design components with clear interfaces for property-based testing
 
 ## Architecture
 
-### System Architecture Diagram
+### High-Level Architecture
 
 ```mermaid
 graph TB
     subgraph "Client Layer"
-        CA[Customer Mobile App<br/>React Native]
-        SOA[Store Owner App<br/>React Native]
-        SOD[Store Owner Dashboard<br/>React Web]
-        MD[Manufacturer Dashboard<br/>React Web]
+        Web[Web Dashboard]
+        Mobile[Mobile App]
     end
     
-    subgraph "API Gateway Layer"
-        AG[Amazon API Gateway<br/>REST + WebSocket]
+    subgraph "API Gateway"
+        Gateway[API Gateway / Load Balancer]
     end
     
-    subgraph "Application Layer - AWS Lambda"
-        ScanService[Scan Service]
-        VerifyService[Verification Service]
-        TrustScoreService[Trust Score Calculator]
-        AlertService[Alert Service]
-        MarketIntelService[Market Intelligence]
-        ForecastService[Demand Forecasting]
-        PricingService[Dynamic Pricing]
-        CopilotService[AI Copilot]
-    end
-    
-    subgraph "AI/ML Layer"
-        Bedrock[AWS Bedrock<br/>Claude/Titan]
-        Rekognition[AWS Rekognition<br/>Computer Vision]
-        SageMaker[Amazon SageMaker<br/>Custom ML Models]
-        Textract[AWS Textract<br/>Document Processing]
+    subgraph "Application Services"
+        Auth[Authentication Service]
+        Monitor[Price Monitor Service]
+        Pricing[Pricing Engine Service]
+        Forecast[Forecast Engine Service]
+        Alert[Alert Service]
+        Integration[Marketplace Integration Service]
     end
     
     subgraph "Data Layer"
-        DDB[(DynamoDB<br/>Product Data)]
-        S3[(S3<br/>Images & Documents)]
-        ElastiCache[(ElastiCache<br/>Redis Cache)]
+        PriceDB[(Price History DB)]
+        SalesDB[(Sales Data DB)]
+        UserDB[(User & Config DB)]
+        Cache[Redis Cache]
     end
     
-    subgraph "Integration Layer"
-        EventBridge[EventBridge<br/>Event Bus]
-        SNS[SNS<br/>Notifications]
-        SQS[SQS<br/>Message Queue]
+    subgraph "Message Queue"
+        Queue[Message Queue - RabbitMQ/Kafka]
     end
     
-    CA --> AG
-    SOA --> AG
-    SOD --> AG
-    MD --> AG
+    subgraph "External Services"
+        Amazon[Amazon API]
+        eBay[eBay API]
+        Shopify[Shopify API]
+    end
     
-    AG --> ScanService
-    AG --> VerifyService
-    AG --> TrustScoreService
-    AG --> AlertService
-    AG --> MarketIntelService
-    AG --> ForecastService
-    AG --> PricingService
-    AG --> CopilotService
+    Web --> Gateway
+    Mobile --> Gateway
+    Gateway --> Auth
+    Gateway --> Monitor
+    Gateway --> Pricing
+    Gateway --> Forecast
+    Gateway --> Alert
     
-    ScanService --> Rekognition
-    ScanService --> DDB
+    Monitor --> Queue
+    Pricing --> Queue
+    Forecast --> Queue
+    Alert --> Queue
     
-    VerifyService --> Bedrock
-    VerifyService --> DDB
-    VerifyService --> S3
+    Monitor --> PriceDB
+    Pricing --> PriceDB
+    Pricing --> SalesDB
+    Forecast --> SalesDB
     
-    TrustScoreService --> DDB
-    TrustScoreService --> SageMaker
+    Auth --> UserDB
+    Monitor --> Cache
+    Pricing --> Cache
     
-    MarketIntelService --> DDB
-    MarketIntelService --> SageMaker
+    Integration --> Amazon
+    Integration --> eBay
+    Integration --> Shopify
+    Integration --> Queue
     
-    ForecastService --> SageMaker
-    ForecastService --> DDB
-    
-    PricingService --> SageMaker
-    PricingService --> DDB
-    
-    CopilotService --> Bedrock
-    CopilotService --> DDB
-    
-    AlertService --> SNS
-    AlertService --> EventBridge
-    
-    ScanService --> ElastiCache
-    VerifyService --> ElastiCache
-    
-    EventBridge --> SQS
-    SQS --> AlertService
+    Queue --> Monitor
+    Queue --> Pricing
+    Queue --> Forecast
+    Queue --> Alert
 ```
 
-### Architecture Principles
+### Service Responsibilities
 
-1. **Serverless-First**: Use AWS Lambda for compute to achieve automatic scaling and pay-per-use pricing
-2. **Event-Driven**: Decouple services using EventBridge for asynchronous processing and resilience
-3. **Cache-Heavy**: Leverage ElastiCache for frequently accessed product data to minimize database reads
-4. **AI-Native**: Integrate AWS AI services (Bedrock, Rekognition, SageMaker) for intelligent features
-5. **Mobile-Optimized**: Design APIs for low-latency, minimal payload size, and offline capability
-6. **Multi-Tenant**: Support multiple manufacturers and retailers with data isolation and access control
+**Price Monitor Service**
+- Poll marketplace APIs for competitor prices
+- Detect price changes and calculate deltas
+- Store historical price data
+- Emit price change events
 
+**Pricing Engine Service**
+- Calculate pricing recommendations based on multiple factors
+- Apply pricing strategies (competitive, premium, clearance)
+- Calculate price elasticity
+- Respect profit margin constraints
 
+**Forecast Engine Service**
+- Analyze historical sales data
+- Generate demand forecasts using time series models
+- Detect seasonal patterns
+- Calculate forecast confidence intervals
+
+**Alert Service**
+- Process events from other services
+- Generate alerts based on configured rules
+- Deliver notifications via email, SMS, webhooks
+- Manage alert preferences
+
+**Marketplace Integration Service**
+- Handle OAuth authentication with marketplaces
+- Execute price updates via marketplace APIs
+- Manage rate limiting and retries
+- Maintain API credential security
 
 ## Components and Interfaces
 
-### 1. QR Scanner Component
+### Price Monitor Service
 
-**Responsibility**: Decode QR codes and trigger visual recognition fallback
+**Core Responsibilities:**
+- Retrieve competitor prices from multiple marketplaces
+- Track price changes over time
+- Calculate price statistics and trends
+- Emit alerts for significant price movements
 
-**Interface**:
+**Key Interfaces:**
+
 ```typescript
-interface QRScanner {
-  scanQRCode(imageData: ImageData): Promise<ScanResult>
-  triggerVisualRecognition(imageData: ImageData): Promise<VisualRecognitionResult>
+interface PriceMonitor {
+  // Retrieve current competitor prices for a product
+  getCompetitorPrices(productId: string, marketplaces: Marketplace[]): Promise<CompetitorPrice[]>
+  
+  // Get historical price data for analysis
+  getPriceHistory(productId: string, startDate: Date, endDate: Date): Promise<PriceHistory>
+  
+  // Calculate price statistics over a period
+  calculatePriceStats(productId: string, period: TimePeriod): Promise<PriceStatistics>
+  
+  // Detect price trends and patterns
+  analyzePriceTrends(productId: string, period: TimePeriod): Promise<PriceTrend>
 }
 
-type ScanResult = {
-  success: boolean
-  productId?: string
-  qrType: 'manufacturer' | 'retailer' | 'none'
-  confidence: number
-  timestamp: Date
-}
-
-type VisualRecognitionResult = {
+interface CompetitorPrice {
+  competitorId: string
   productId: string
-  productName: string
-  category: ProductCategory
-  confidence: number
-  matchedImages: string[]
-}
-```
-
-**Implementation Details**:
-- Use device camera API for QR code scanning
-- Decode QR codes locally on device for speed
-- If QR decode fails after 3 attempts, invoke AWS Rekognition Custom Labels for visual product identification
-- Cache recently scanned products for offline access
-
-### 2. Trust Score Calculator
-
-**Responsibility**: Compute composite trust score from multiple signals
-
-**Interface**:
-```typescript
-interface TrustScoreCalculator {
-  calculateTrustScore(productId: string, context: ScanContext): Promise<TrustScore>
-  getSignalWeights(category: ProductCategory): SignalWeights
+  marketplace: Marketplace
+  price: number
+  currency: string
+  timestamp: Date
+  availability: boolean
 }
 
-type TrustScore = {
-  overall: number // 0-100
-  signals: {
-    authenticity: AuthenticitySignal
-    tampering: TamperingSignal
-    freshness: FreshnessSignal
-    socialProof: SocialProofSignal
-  }
-  confidence: number
-  lastUpdated: Date
+interface PriceHistory {
+  productId: string
+  dataPoints: PriceDataPoint[]
+  startDate: Date
+  endDate: Date
 }
 
-type SignalWeights = {
-  authenticity: number // default 0.30
-  tampering: number // default 0.30
-  freshness: number // default 0.25
-  socialProof: number // default 0.15
-}
-
-type AuthenticitySignal = {
-  status: 'genuine' | 'suspicious' | 'unknown'
-  confidence: number
-  verificationMethod: string[]
-  details: string
-}
-
-type TamperingSignal = {
-  status: 'intact' | 'opened' | 'resealed' | 'unknown'
-  confidence: number
-  evidenceImages?: string[]
-  details: string
-}
-
-type FreshnessSignal = {
-  status: 'fresh' | 'near-expiry' | 'expired' | 'unknown'
-  daysUntilExpiry?: number
-  manufacturingDate?: Date
-  expiryDate?: Date
-  details: string
-}
-
-type SocialProofSignal = {
-  rating: number // 1-5
-  reviewCount: number
-  verifiedPurchases: number
-  sentimentScore: number // -1 to 1
-}
-```
-
-**Implementation Details**:
-- Calculate weighted average of four signals based on category-specific weights
-- Store signal weights in DynamoDB configuration table
-- Use SageMaker model for authenticity prediction when database verification unavailable
-- Cache trust scores in ElastiCache with 1-hour TTL
-
-
-
-### 3. Authenticity Verifier
-
-**Responsibility**: Validate product genuineness through multiple verification methods
-
-**Interface**:
-```typescript
-interface AuthenticityVerifier {
-  verifyProduct(productId: string, serialNumber: string, batchCode: string): Promise<AuthenticityResult>
-  checkManufacturerDatabase(productId: string): Promise<DatabaseVerification>
-  checkBlockchain(productId: string): Promise<BlockchainVerification>
-  compareVisualFeatures(productImages: string[]): Promise<VisualVerification>
-}
-
-type AuthenticityResult = {
-  isAuthentic: boolean
-  confidence: number
-  verificationMethods: VerificationMethod[]
-  flags: string[]
-  recommendation: string
-}
-
-type VerificationMethod = {
-  method: 'database' | 'blockchain' | 'visual' | 'serial'
-  result: 'pass' | 'fail' | 'inconclusive'
-  details: string
-}
-```
-
-**Implementation Details**:
-- Query manufacturer API endpoints for serial number validation
-- Check blockchain records (if product registered on Ethereum/Polygon)
-- Use AWS Rekognition to compare product images against reference images in S3
-- Implement fraud pattern detection using SageMaker model trained on known counterfeits
-- Flag products with duplicate serial numbers in different locations
-
-### 4. Tampering Detector
-
-**Responsibility**: Analyze packaging images to detect physical tampering
-
-**Interface**:
-```typescript
-interface TamperingDetector {
-  analyzePackaging(productImages: string[]): Promise<TamperingAnalysis>
-  detectBrokenSeals(image: string): Promise<SealAnalysis>
-  detectResealing(image: string): Promise<ResealingAnalysis>
-}
-
-type TamperingAnalysis = {
-  tampered: boolean
-  confidence: number
-  indicators: TamperingIndicator[]
-  evidenceRegions: BoundingBox[]
-  recommendation: string
-}
-
-type TamperingIndicator = {
-  type: 'broken_seal' | 'misaligned_label' | 'adhesive_residue' | 'box_deformation' | 'color_mismatch'
-  confidence: number
-  location: BoundingBox
-  description: string
-}
-
-type BoundingBox = {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-```
-
-**Implementation Details**:
-- Use AWS Rekognition Custom Labels trained on tampered vs intact packaging
-- Detect seal integrity using edge detection and pattern matching
-- Identify adhesive residue through texture analysis
-- Compare packaging alignment against reference images
-- Highlight suspicious regions in returned images for user review
-
-
-
-### 5. Freshness Analyzer
-
-**Responsibility**: Calculate product freshness based on dates and storage conditions
-
-**Interface**:
-```typescript
-interface FreshnessAnalyzer {
-  analyzeFreshness(product: Product, storageData?: StorageConditions): Promise<FreshnessAnalysis>
-  extractDatesFromPackaging(image: string): Promise<DateExtraction>
-  calculateShelfLife(category: ProductCategory, manufacturingDate: Date): number
-}
-
-type FreshnessAnalysis = {
-  status: 'fresh' | 'near-expiry' | 'expired'
-  daysRemaining: number
-  freshnessScore: number // 0-100
-  factors: FreshnessFactor[]
-  recommendation: string
-}
-
-type FreshnessFactor = {
-  factor: 'age' | 'storage_temp' | 'humidity' | 'light_exposure'
-  impact: 'positive' | 'negative' | 'neutral'
-  details: string
-}
-
-type StorageConditions = {
-  temperatureLogs: TemperatureLog[]
-  humidityLogs: HumidityLog[]
-  lightExposure: number
-}
-```
-
-**Implementation Details**:
-- Use AWS Textract to extract manufacturing and expiry dates from packaging images
-- Apply category-specific shelf life calculations (electronics: warranty-based, FMCG: expiry-based)
-- Integrate IoT sensor data when available for storage condition analysis
-- Calculate freshness score: 100 at manufacturing, linear decay to 0 at expiry
-- Adjust score based on storage conditions (temperature abuse reduces score)
-
-### 6. AI Copilot Service
-
-**Responsibility**: Provide conversational AI assistance for retail operations
-
-**Interface**:
-```typescript
-interface AICopilot {
-  chat(userId: string, message: string, context: ConversationContext): Promise<CopilotResponse>
-  analyzeStorePerformance(storeId: string): Promise<PerformanceInsights>
-  recommendActions(storeId: string): Promise<ActionRecommendation[]>
-}
-
-type CopilotResponse = {
-  message: string
-  suggestions: string[]
-  actions: CopilotAction[]
-  confidence: number
-}
-
-type CopilotAction = {
-  type: 'adjust_pricing' | 'reorder_stock' | 'contact_supplier' | 'run_promotion'
-  description: string
-  expectedImpact: string
-  priority: 'high' | 'medium' | 'low'
-}
-
-type PerformanceInsights = {
-  summary: string
-  metrics: {
-    wasteRate: number
-    verificationPassRate: number
-    customerTrustScore: number
-    revenueRecovery: number
-  }
-  trends: Trend[]
-  recommendations: string[]
-}
-```
-
-**Implementation Details**:
-- Use AWS Bedrock (Claude 3) for natural language understanding and generation
-- Maintain conversation context in DynamoDB with session management
-- Integrate with store data (inventory, sales, verification history) for contextual responses
-- Provide proactive insights by analyzing patterns in store data
-- Support multilingual conversations using AWS Translate
-
-
-
-### 7. Market Intelligence Engine
-
-**Responsibility**: Analyze market trends, competitor pricing, and demand patterns
-
-**Interface**:
-```typescript
-interface MarketIntelligenceEngine {
-  getMarketTrends(region: string, category: ProductCategory): Promise<MarketTrends>
-  analyzeCompetitorPricing(productId: string, location: Location): Promise<PricingAnalysis>
-  identifyOpportunities(storeId: string): Promise<BusinessOpportunity[]>
-}
-
-type MarketTrends = {
-  trendingProducts: ProductTrend[]
-  decliningCategories: CategoryTrend[]
-  seasonalPatterns: SeasonalPattern[]
-  emergingDemand: DemandSignal[]
-}
-
-type PricingAnalysis = {
+interface PriceDataPoint {
+  timestamp: Date
   averagePrice: number
-  priceRange: { min: number; max: number }
-  competitorPrices: CompetitorPrice[]
-  recommendedPrice: number
-  pricePosition: 'premium' | 'competitive' | 'discount'
+  minPrice: number
+  maxPrice: number
+  competitorCount: number
 }
 
-type BusinessOpportunity = {
-  type: 'high_demand_low_supply' | 'underpriced_product' | 'seasonal_opportunity'
-  description: string
-  potentialRevenue: number
-  actionRequired: string
-  urgency: 'high' | 'medium' | 'low'
+interface PriceStatistics {
+  average: number
+  median: number
+  min: number
+  max: number
+  standardDeviation: number
+  volatility: number
+}
+
+interface PriceTrend {
+  pattern: 'increasing' | 'decreasing' | 'stable' | 'volatile'
+  confidence: number
+  changePercentage: number
 }
 ```
 
-**Implementation Details**:
-- Aggregate anonymized scan data across regions to identify trending products
-- Use SageMaker time-series models to detect demand patterns
-- Query competitor pricing from public sources and user-reported prices
-- Calculate market position using percentile ranking
-- Generate opportunity alerts using rule-based and ML-based detection
+### Pricing Engine Service
 
-### 8. Demand Forecaster
+**Core Responsibilities:**
+- Generate pricing recommendations based on multiple factors
+- Apply pricing strategies
+- Calculate price elasticity
+- Ensure profit margin constraints
 
-**Responsibility**: Predict future product demand for inventory optimization
+**Key Interfaces:**
 
-**Interface**:
 ```typescript
-interface DemandForecaster {
-  forecastDemand(productId: string, storeId: string, horizon: number): Promise<DemandForecast>
-  getOptimalReorderPoint(productId: string, storeId: string): Promise<ReorderRecommendation>
-  adjustForExternalFactors(forecast: DemandForecast, factors: ExternalFactor[]): DemandForecast
+interface PricingEngine {
+  // Generate pricing recommendation for a product
+  generateRecommendation(request: PricingRequest): Promise<PricingRecommendation>
+  
+  // Calculate price elasticity for a product
+  calculateElasticity(productId: string): Promise<PriceElasticity>
+  
+  // Apply a pricing strategy to get recommended price
+  applyStrategy(strategy: PricingStrategy, context: PricingContext): Promise<number>
 }
 
-type DemandForecast = {
-  predictions: DemandPrediction[]
-  confidence: number
-  influencingFactors: Factor[]
-  accuracy: number // based on historical performance
-}
-
-type DemandPrediction = {
-  date: Date
-  predictedDemand: number
-  confidenceInterval: { lower: number; upper: number }
-}
-
-type ReorderRecommendation = {
-  reorderPoint: number
-  reorderQuantity: number
-  expectedStockoutDate: Date
-  reasoning: string
-}
-
-type ExternalFactor = {
-  type: 'festival' | 'weather' | 'local_event' | 'competitor_action'
-  impact: number // -1 to 1
-  confidence: number
-}
-```
-
-**Implementation Details**:
-- Train SageMaker DeepAR models on historical scan and sales data
-- Incorporate seasonality, trends, and external events (festivals, weather)
-- Use Prophet for time-series forecasting with holiday effects
-- Calculate safety stock based on demand variability
-- Continuously update models with actual sales data for accuracy improvement
-
-
-
-### 9. Dynamic Pricing Service
-
-**Responsibility**: Calculate optimal pricing based on demand, competition, and expiry
-
-**Interface**:
-```typescript
-interface DynamicPricingService {
-  calculateOptimalPrice(productId: string, context: PricingContext): Promise<PricingRecommendation>
-  calculateExpiryDiscount(product: Product, daysRemaining: number): Promise<DiscountRecommendation>
-  simulatePriceImpact(productId: string, proposedPrice: number): Promise<PriceImpactSimulation>
-}
-
-type PricingContext = {
+interface PricingRequest {
+  productId: string
   currentPrice: number
-  costPrice: number
-  competitorPrices: number[]
+  cost: number
+  minProfitMargin: number
+  strategy: PricingStrategy
   inventoryLevel: number
-  demandForecast: number
-  daysUntilExpiry?: number
+  averageInventory: number
 }
 
-type PricingRecommendation = {
+interface PricingRecommendation {
+  productId: string
+  currentPrice: number
   recommendedPrice: number
-  expectedRevenue: number
-  expectedSellThroughRate: number
-  reasoning: string
+  expectedProfitMargin: number
+  confidence: number
+  reasoning: string[]
+  factors: PricingFactors
+}
+
+interface PricingFactors {
+  competitorPrices: number[]
+  medianCompetitorPrice: number
+  demandForecast: number
+  inventoryLevel: number
   priceElasticity: number
 }
 
-type DiscountRecommendation = {
-  discountPercentage: number
-  finalPrice: number
-  expectedSellThroughProbability: number
-  revenueRecovery: number
-  urgency: 'critical' | 'high' | 'medium'
-}
-```
-
-**Implementation Details**:
-- Use SageMaker regression models to predict price elasticity
-- Calculate expiry discounts using urgency-based curves (steeper near expiry)
-- Consider competitor pricing, inventory levels, and demand forecasts
-- Implement A/B testing framework to validate pricing recommendations
-- Track actual vs predicted outcomes to improve model accuracy
-
-### 10. Fraud Pattern Detector
-
-**Responsibility**: Identify suspicious patterns across the product network
-
-**Interface**:
-```typescript
-interface FraudPatternDetector {
-  detectDuplicateSerials(serialNumber: string): Promise<DuplicationAlert>
-  analyzeReviewPatterns(productId: string): Promise<ReviewFraudAnalysis>
-  detectSupplyChainAnomalies(productId: string): Promise<SupplyChainAnomaly[]>
-}
-
-type DuplicationAlert = {
-  isDuplicate: boolean
-  scanLocations: Location[]
-  scanTimes: Date[]
-  suspicionLevel: 'high' | 'medium' | 'low'
-  affectedUsers: string[]
-}
-
-type ReviewFraudAnalysis = {
-  suspiciousReviews: Review[]
-  fraudIndicators: FraudIndicator[]
-  genuineReviewPercentage: number
-  recommendation: 'filter' | 'flag' | 'accept'
-}
-
-type SupplyChainAnomaly = {
-  type: 'skipped_tier' | 'unauthorized_region' | 'rapid_movement' | 'custody_gap'
-  description: string
-  severity: 'critical' | 'high' | 'medium' | 'low'
-  evidence: string[]
-}
-```
-
-**Implementation Details**:
-- Use graph analysis to detect serial number cloning across locations
-- Apply NLP sentiment analysis and pattern matching for fake review detection
-- Implement anomaly detection using isolation forests on supply chain data
-- Create fraud signatures from known counterfeit operations
-- Generate real-time alerts for high-severity fraud patterns
-
-
-
-### 11. Document Processor
-
-**Responsibility**: Extract structured information from product documents
-
-**Interface**:
-```typescript
-interface DocumentProcessor {
-  processInvoice(documentUrl: string): Promise<InvoiceData>
-  processCertificate(documentUrl: string): Promise<CertificateData>
-  processLabel(imageUrl: string): Promise<LabelData>
-}
-
-type InvoiceData = {
-  productDetails: ProductDetail[]
-  batchNumbers: string[]
-  quantities: number[]
-  prices: number[]
-  supplier: string
-  date: Date
-  confidence: number
-}
-
-type CertificateData = {
-  certificationType: string
-  issuingAuthority: string
-  validFrom: Date
-  validUntil: Date
-  certificationMarks: string[]
-  confidence: number
-}
-
-type LabelData = {
-  ingredients: string[]
-  nutritionalInfo: NutritionalInfo
-  allergens: string[]
-  manufacturingDate: Date
-  expiryDate: Date
-  regulatoryMarks: string[]
-  confidence: number
-}
-```
-
-**Implementation Details**:
-- Use AWS Textract for OCR and document structure extraction
-- Apply AWS Bedrock for intelligent information extraction and normalization
-- Implement document type classification using image features
-- Extract tables, key-value pairs, and free text using Textract Forms and Tables
-- Validate extracted data against expected formats and ranges
-- Support multilingual documents with AWS Translate integration
-
-### 12. Supply Chain Tracker
-
-**Responsibility**: Monitor product movement and custody transfers
-
-**Interface**:
-```typescript
-interface SupplyChainTracker {
-  recordCustodyTransfer(transfer: CustodyTransfer): Promise<void>
-  getProductJourney(productId: string): Promise<ProductJourney>
-  detectGreyMarket(productId: string): Promise<GreyMarketAnalysis>
-}
-
-type CustodyTransfer = {
+interface PriceElasticity {
   productId: string
-  fromParty: string
-  toParty: string
-  location: Location
+  elasticity: number
+  classification: 'elastic' | 'inelastic'
+  confidence: number
+  dataPoints: number
+}
+
+interface PricingStrategy {
+  type: 'competitive' | 'premium' | 'clearance'
+  parameters: Record<string, any>
+}
+
+interface PricingContext {
+  competitorPrices: number[]
+  currentInventory: number
+  averageInventory: number
+  demandForecast: number
+  minProfitMargin: number
+  cost: number
+}
+```
+
+### Forecast Engine Service
+
+**Core Responsibilities:**
+- Predict future product demand
+- Detect seasonal patterns
+- Incorporate external events
+- Calculate forecast accuracy
+
+**Key Interfaces:**
+
+```typescript
+interface ForecastEngine {
+  // Generate demand forecast for a product
+  generateForecast(productId: string, horizons: number[]): Promise<DemandForecast>
+  
+  // Detect seasonal patterns in sales data
+  detectSeasonality(productId: string): Promise<SeasonalPattern>
+  
+  // Calculate forecast accuracy against actual sales
+  calculateAccuracy(productId: string, forecastDate: Date): Promise<ForecastAccuracy>
+  
+  // Adjust forecast for external events
+  adjustForEvents(forecast: DemandForecast, events: ExternalEvent[]): Promise<DemandForecast>
+}
+
+interface DemandForecast {
+  productId: string
+  generatedAt: Date
+  predictions: ForecastPrediction[]
+}
+
+interface ForecastPrediction {
+  horizon: number // days ahead
+  predictedDemand: number
+  lowerBound: number
+  upperBound: number
+  confidence: number
+}
+
+interface SeasonalPattern {
+  detected: boolean
+  period: number // days
+  strength: number
+  peaks: number[]
+}
+
+interface ForecastAccuracy {
+  productId: string
+  meanAbsoluteError: number
+  meanAbsolutePercentageError: number
+  accuracy: number // 1 - MAPE
+}
+
+interface ExternalEvent {
+  name: string
+  date: Date
+  impact: number // multiplier
+  duration: number // days
+}
+```
+
+### Inventory Optimizer
+
+**Core Responsibilities:**
+- Calculate reorder points
+- Recommend order quantities
+- Predict stockouts
+- Optimize safety stock levels
+
+**Key Interfaces:**
+
+```typescript
+interface InventoryOptimizer {
+  // Calculate when to reorder
+  calculateReorderPoint(productId: string): Promise<ReorderPoint>
+  
+  // Recommend order quantity
+  recommendOrderQuantity(productId: string): Promise<OrderRecommendation>
+  
+  // Predict stockout risk
+  predictStockout(productId: string): Promise<StockoutPrediction>
+  
+  // Calculate optimal safety stock
+  calculateSafetyStock(productId: string, serviceLevel: number): Promise<number>
+}
+
+interface ReorderPoint {
+  productId: string
+  reorderPoint: number
+  currentInventory: number
+  shouldReorder: boolean
+  daysUntilStockout: number
+}
+
+interface OrderRecommendation {
+  productId: string
+  recommendedQuantity: number
+  estimatedCost: number
+  reasoning: string[]
+}
+
+interface StockoutPrediction {
+  productId: string
+  riskLevel: 'low' | 'medium' | 'high'
+  predictedStockoutDate: Date | null
+  daysUntilStockout: number
+  confidence: number
+}
+```
+
+### Alert Service
+
+**Core Responsibilities:**
+- Process events and generate alerts
+- Apply alert rules and priorities
+- Deliver notifications via multiple channels
+- Manage alert preferences
+
+**Key Interfaces:**
+
+```typescript
+interface AlertService {
+  // Generate alert from an event
+  generateAlert(event: AlertEvent): Promise<Alert>
+  
+  // Deliver alert to user
+  deliverAlert(alert: Alert, user: User): Promise<DeliveryResult>
+  
+  // Configure alert preferences
+  setAlertPreferences(userId: string, preferences: AlertPreferences): Promise<void>
+}
+
+interface AlertEvent {
+  type: 'price_change' | 'margin_warning' | 'stockout_risk' | 'pricing_opportunity'
+  productId: string
+  severity: 'low' | 'medium' | 'high'
+  data: Record<string, any>
   timestamp: Date
-  verificationStatus: 'verified' | 'unverified'
-  documents: string[]
 }
 
-type ProductJourney = {
-  origin: Location
-  currentLocation: Location
-  custodyChain: CustodyTransfer[]
-  gaps: CustodyGap[]
-  integrityScore: number
+interface Alert {
+  id: string
+  type: string
+  severity: 'low' | 'medium' | 'high'
+  title: string
+  message: string
+  productId: string
+  actionable: boolean
+  actions: AlertAction[]
+  timestamp: Date
 }
 
-type GreyMarketAnalysis = {
-  isGreyMarket: boolean
-  evidence: string[]
-  unauthorizedRegions: string[]
-  divertedFromTier: string
-  estimatedLoss: number
+interface AlertAction {
+  label: string
+  action: string
+  parameters: Record<string, any>
+}
+
+interface AlertPreferences {
+  channels: ('email' | 'sms' | 'webhook' | 'dashboard')[]
+  severityThreshold: 'low' | 'medium' | 'high'
+  quietHours: TimeRange | null
+}
+
+interface DeliveryResult {
+  channel: string
+  success: boolean
+  timestamp: Date
+  error?: string
 }
 ```
 
-**Implementation Details**:
-- Store custody transfers in DynamoDB with composite sort keys for efficient querying
-- Create product journey visualizations using geographic data
-- Detect grey market by comparing actual vs authorized distribution paths
-- Flag products appearing in unauthorized regions or skipping distribution tiers
-- Generate alerts for manufacturers when diversion is detected
+### Marketplace Integration Service
 
+**Core Responsibilities:**
+- Authenticate with marketplace APIs
+- Execute price updates
+- Handle rate limiting and retries
+- Manage API credentials securely
 
+**Key Interfaces:**
 
-### 13. Recall Manager
-
-**Responsibility**: Manage product recalls and stakeholder notifications
-
-**Interface**:
 ```typescript
-interface RecallManager {
-  issueRecall(recall: RecallNotice): Promise<RecallCampaign>
-  notifyAffectedUsers(recallId: string): Promise<NotificationResult>
-  trackRecallEffectiveness(recallId: string): Promise<RecallMetrics>
+interface MarketplaceIntegration {
+  // Authenticate with a marketplace
+  authenticate(marketplace: Marketplace, credentials: Credentials): Promise<AuthToken>
+  
+  // Update product price on marketplace
+  updatePrice(marketplace: Marketplace, productId: string, newPrice: number): Promise<UpdateResult>
+  
+  // Retrieve product data from marketplace
+  getProductData(marketplace: Marketplace, productId: string): Promise<ProductData>
+  
+  // Refresh authentication token
+  refreshToken(marketplace: Marketplace, token: AuthToken): Promise<AuthToken>
 }
 
-type RecallNotice = {
-  productIds: string[]
-  batchNumbers?: string[]
-  serialNumberRange?: { start: string; end: string }
-  manufacturingDateRange?: { start: Date; end: Date }
-  reason: string
-  severity: 'critical' | 'high' | 'medium'
-  returnInstructions: string
-  compensationDetails?: string
+interface Credentials {
+  marketplace: Marketplace
+  clientId: string
+  clientSecret: string
+  additionalParams: Record<string, string>
 }
 
-type RecallCampaign = {
-  recallId: string
-  affectedProductCount: number
-  affectedUserCount: number
-  notificationsSent: number
-  status: 'active' | 'completed'
+interface AuthToken {
+  accessToken: string
+  refreshToken: string
+  expiresAt: Date
+  marketplace: Marketplace
 }
 
-type RecallMetrics = {
-  notificationReach: number
-  returnRate: number
-  productsRemoved: number
-  productsStillInCirculation: number
-  complianceScore: number
+interface UpdateResult {
+  success: boolean
+  productId: string
+  oldPrice: number
+  newPrice: number
+  timestamp: Date
+  error?: string
 }
+
+interface ProductData {
+  productId: string
+  title: string
+  currentPrice: number
+  inventory: number
+  marketplace: Marketplace
+}
+
+type Marketplace = 'amazon' | 'ebay' | 'shopify'
 ```
-
-**Implementation Details**:
-- Query DynamoDB to identify all affected products by batch/serial/date
-- Send push notifications via SNS to all users who scanned affected products
-- Alert store owners via WebSocket for immediate inventory removal
-- Display prominent warnings in Customer App when recalled products are scanned
-- Track return confirmations and update Product Digital Twin status
-- Generate compliance reports for regulatory authorities
-
-### 14. Voice Interface Service
-
-**Responsibility**: Provide speech-based interaction for accessibility
-
-**Interface**:
-```typescript
-interface VoiceInterfaceService {
-  processVoiceCommand(audioData: AudioData, language: string): Promise<VoiceResponse>
-  textToSpeech(text: string, language: string): Promise<AudioData>
-  enableVoiceMode(userId: string): Promise<VoiceSession>
-}
-
-type VoiceResponse = {
-  transcription: string
-  intent: string
-  response: string
-  audioResponse: AudioData
-  followUpPrompts: string[]
-}
-
-type VoiceSession = {
-  sessionId: string
-  language: string
-  context: ConversationContext
-  active: boolean
-}
-```
-
-**Implementation Details**:
-- Use AWS Transcribe for speech-to-text in 22 Indian languages
-- Use AWS Polly for natural-sounding text-to-speech
-- Integrate with AI Copilot for conversational understanding
-- Maintain voice session context for multi-turn conversations
-- Provide audio feedback for all UI interactions in voice mode
-- Support voice commands for scanning, navigation, and information retrieval
-
-
 
 ## Data Models
 
-### Product Digital Twin
+### Price Data Model
 
 ```typescript
-type ProductDigitalTwin = {
-  // Primary Key
-  productId: string // PK: PRODUCT#{uuid}
-  
-  // Product Information
-  name: string
-  category: ProductCategory
-  brand: string
-  manufacturer: string
-  
-  // Identification
-  serialNumber?: string
-  batchCode?: string
-  manufacturerQR?: string
-  retailerQR?: string
-  
-  // Dates
-  manufacturingDate: Date
-  expiryDate?: Date
-  warrantyUntil?: Date
-  
-  // Authenticity
-  authenticityStatus: 'verified' | 'suspicious' | 'counterfeit' | 'unknown'
-  verificationMethods: string[]
-  blockchainRecord?: string
-  
-  // Physical State
-  tamperingStatus: 'intact' | 'opened' | 'resealed' | 'unknown'
-  tamperingEvidence?: string[]
-  
-  // Supply Chain
-  custodyChain: CustodyTransfer[]
-  currentLocation: Location
-  authorizedRegions: string[]
-  
-  // Metadata
-  images: string[]
-  documents: string[]
-  certificates: string[]
-  
-  // Timestamps
-  createdAt: Date
-  updatedAt: Date
-  lastScannedAt: Date
-  scanCount: number
-}
-
-type ProductCategory = 
-  | 'electronics'
-  | 'fmcg'
-  | 'medicine'
-  | 'cosmetics'
-  | 'apparel'
-  | 'food'
-  | 'beverage'
-  | 'other'
-```
-
-### Scan Record
-
-```typescript
-type ScanRecord = {
-  // Primary Key
-  scanId: string // PK: SCAN#{uuid}
-  
-  // Foreign Keys
-  productId: string // GSI: productId-timestamp-index
-  userId: string // GSI: userId-timestamp-index
-  storeId?: string
-  
-  // Scan Details
-  scanType: 'customer' | 'store_owner' | 'manufacturer'
-  scanMethod: 'qr_manufacturer' | 'qr_retailer' | 'visual_recognition'
-  
-  // Location
-  location: Location
-  
-  // Results
-  trustScore: TrustScore
-  verificationResult: VerificationResult
-  
-  // Context
-  deviceInfo: DeviceInfo
-  appVersion: string
-  
-  // Timestamps
-  timestamp: Date
-  processingTime: number // milliseconds
-}
-
-type Location = {
-  latitude: number
-  longitude: number
-  city: string
-  state: string
-  country: string
-  accuracy: number
-}
-```
-
-### Store Profile
-
-```typescript
-type StoreProfile = {
-  // Primary Key
-  storeId: string // PK: STORE#{uuid}
-  
-  // Store Information
-  name: string
-  ownerName: string
-  ownerContact: string
-  
-  // Location
-  address: string
-  location: Location
-  
-  // Verification Status
-  verificationBadge: boolean
-  badgeAwardedAt?: Date
-  verificationPassRate: number
-  totalVerifications: number
-  
-  // Inventory
-  inventoryCount: number
-  expiringProductsCount: number
-  
-  // Performance Metrics
-  customerTrustScore: number
-  wasteReductionRate: number
-  revenueRecovery: number
-  
-  // Suppliers
-  suppliers: SupplierRelationship[]
-  
-  // Timestamps
-  createdAt: Date
-  updatedAt: Date
-  lastActiveAt: Date
-}
-
-type SupplierRelationship = {
-  supplierId: string
-  supplierName: string
-  verificationPassRate: number
-  totalDeliveries: number
-  lastDeliveryAt: Date
-  trustScore: number
-}
-```
-
-
-
-### Inventory Item
-
-```typescript
-type InventoryItem = {
-  // Composite Key
-  storeId: string // PK: STORE#{storeId}
-  productId: string // SK: PRODUCT#{productId}
-  
-  // Inventory Details
-  quantity: number
-  costPrice: number
-  sellingPrice: number
-  
-  // Freshness
-  expiryDate?: Date
-  daysUntilExpiry?: number
-  freshnessStatus: 'fresh' | 'near-expiry' | 'expired'
-  
-  // Pricing
-  discountPercentage: number
-  dynamicPricingEnabled: boolean
-  recommendedPrice?: number
-  
-  // Verification
-  verificationStatus: 'verified' | 'pending' | 'failed'
-  verifiedAt?: Date
-  verificationDetails?: VerificationResult
-  
-  // Marketplace
-  listedOnMarketplace: boolean
-  marketplaceListingId?: string
-  
-  // Timestamps
-  addedAt: Date
-  updatedAt: Date
-  lastSoldAt?: Date
-}
-```
-
-### Review
-
-```typescript
-type Review = {
-  // Primary Key
-  reviewId: string // PK: REVIEW#{uuid}
-  
-  // Foreign Keys
-  productId: string // GSI: productId-timestamp-index
-  userId: string
-  
-  // Review Content
-  rating: number // 1-5
-  title: string
-  content: string
-  images?: string[]
-  
-  // Verification
-  verifiedPurchase: boolean
-  scanId?: string
-  
-  // Analysis
-  sentimentScore: number // -1 to 1
-  fraudScore: number // 0-1
-  flaggedAsFraud: boolean
-  
-  // Engagement
-  helpfulCount: number
-  reportCount: number
-  
-  // Timestamps
-  createdAt: Date
-  updatedAt: Date
-}
-```
-
-### Market Data
-
-```typescript
-type MarketData = {
-  // Composite Key
-  region: string // PK: REGION#{region}
-  date: string // SK: DATE#{YYYY-MM-DD}
-  
-  // Aggregated Metrics
-  totalScans: number
-  uniqueProducts: number
-  uniqueUsers: number
-  
-  // Category Trends
-  categoryScans: Record<ProductCategory, number>
-  trendingProducts: ProductTrend[]
-  
-  // Pricing
-  averagePrices: Record<string, number> // productId -> price
-  priceVariance: Record<string, number>
-  
-  // Authenticity
-  counterfeitRate: number
-  tamperingRate: number
-  
-  // Computed At
-  computedAt: Date
-}
-
-type ProductTrend = {
+interface PriceRecord {
+  id: string
   productId: string
-  productName: string
-  scanCount: number
-  growthRate: number // percentage
-  trendDirection: 'rising' | 'stable' | 'declining'
+  sellerId: string
+  marketplace: Marketplace
+  price: number
+  currency: string
+  timestamp: Date
+  isCompetitor: boolean
+  competitorId?: string
+}
+
+interface PriceChangeEvent {
+  id: string
+  productId: string
+  competitorId: string
+  marketplace: Marketplace
+  oldPrice: number
+  newPrice: number
+  changePercentage: number
+  timestamp: Date
 }
 ```
 
-### Demand Forecast
+### Sales Data Model
 
 ```typescript
-type DemandForecast = {
-  // Composite Key
-  storeId: string // PK: STORE#{storeId}
-  productId: string // SK: PRODUCT#{productId}
-  
-  // Forecast Data
-  predictions: DemandPrediction[]
-  confidence: number
-  accuracy: number // based on historical performance
-  
-  // Influencing Factors
-  seasonality: number
-  trend: number
-  externalFactors: ExternalFactor[]
-  
-  // Recommendations
-  reorderPoint: number
-  reorderQuantity: number
-  expectedStockoutDate?: Date
-  
-  // Model Info
-  modelVersion: string
-  trainedAt: Date
-  
-  // Timestamps
-  generatedAt: Date
-  validUntil: Date
+interface SalesRecord {
+  id: string
+  productId: string
+  sellerId: string
+  marketplace: Marketplace
+  quantity: number
+  price: number
+  revenue: number
+  cost: number
+  profitMargin: number
+  timestamp: Date
+}
+
+interface InventoryRecord {
+  id: string
+  productId: string
+  sellerId: string
+  marketplace: Marketplace
+  quantity: number
+  reservedQuantity: number
+  availableQuantity: number
+  lastUpdated: Date
 }
 ```
 
-### Recall Notice
+### User and Configuration Model
 
 ```typescript
-type RecallNotice = {
-  // Primary Key
-  recallId: string // PK: RECALL#{uuid}
-  
-  // Recall Details
-  manufacturerId: string
-  productIds: string[]
-  batchNumbers?: string[]
-  serialNumberRange?: { start: string; end: string }
-  manufacturingDateRange?: { start: Date; end: Date }
-  
-  // Reason
-  reason: string
-  severity: 'critical' | 'high' | 'medium'
-  healthRisk: string
-  
-  // Instructions
-  returnInstructions: string
-  compensationDetails?: string
-  contactInfo: string
-  
-  // Tracking
-  affectedProductCount: number
-  affectedUserCount: number
-  notificationsSent: number
-  returnedCount: number
-  
-  // Status
-  status: 'active' | 'completed' | 'cancelled'
-  
-  // Timestamps
-  issuedAt: Date
-  completedAt?: Date
-  updatedAt: Date
+interface User {
+  id: string
+  email: string
+  passwordHash: string
+  role: 'admin' | 'manager' | 'viewer'
+  mfaEnabled: boolean
+  createdAt: Date
+  lastLogin: Date
+}
+
+interface SellerConfiguration {
+  userId: string
+  minProfitMargin: number
+  defaultStrategy: PricingStrategy
+  autoUpdateEnabled: boolean
+  alertPreferences: AlertPreferences
+  marketplaceCredentials: MarketplaceCredentials[]
+}
+
+interface MarketplaceCredentials {
+  marketplace: Marketplace
+  encryptedCredentials: string
+  lastRefreshed: Date
+}
+
+interface ProductConfiguration {
+  productId: string
+  sellerId: string
+  monitoringEnabled: boolean
+  pricingStrategy: PricingStrategy
+  minPrice: number
+  maxPrice: number
+  targetMargin: number
 }
 ```
-
-### DynamoDB Table Design
-
-**Primary Tables:**
-
-1. **ProductTable**
-   - PK: `productId`
-   - GSI1: `category-lastScannedAt-index` (for trending products)
-   - GSI2: `serialNumber-index` (for duplicate detection)
-
-2. **ScanTable**
-   - PK: `scanId`
-   - GSI1: `productId-timestamp-index` (for product scan history)
-   - GSI2: `userId-timestamp-index` (for user scan history)
-   - GSI3: `location-timestamp-index` (for regional analysis)
-
-3. **StoreTable**
-   - PK: `storeId`
-   - GSI1: `location-verificationPassRate-index` (for store discovery)
-
-4. **InventoryTable**
-   - PK: `storeId`, SK: `productId`
-   - GSI1: `storeId-expiryDate-index` (for expiry alerts)
-
-5. **ReviewTable**
-   - PK: `reviewId`
-   - GSI1: `productId-timestamp-index` (for product reviews)
-   - GSI2: `userId-timestamp-index` (for user reviews)
-
-6. **MarketDataTable**
-   - PK: `region`, SK: `date`
-   - GSI1: `date-region-index` (for cross-region analysis)
-
-7. **RecallTable**
-   - PK: `recallId`
-   - GSI1: `status-issuedAt-index` (for active recalls)
-
 
 
 ## Correctness Properties
 
 *A property is a characteristic or behavior that should hold true across all valid executions of a system—essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
 
-### Product Scanning Properties
+### Price Monitoring Properties
 
-**Property 1: QR Scan Performance**
-*For any* valid QR code (manufacturer or retailer), scanning and retrieving product information should complete within the specified time limits (2 seconds for QR decode, 5 seconds for visual recognition fallback).
-**Validates: Requirements 1.1, 1.3**
+**Property 1: Marketplace Coverage**
+*For any* product added to monitoring, the Price_Monitor should retrieve competitor prices from all configured marketplaces (Amazon, eBay, Shopify).
+**Validates: Requirements 1.1**
 
-**Property 2: QR to Product Linkage**
-*For any* retailer QR code, scanning should successfully link to the corresponding Product_Digital_Twin record with matching productId.
-**Validates: Requirements 1.2**
-
-**Property 3: Trust Score Display Completeness**
-*For any* successful product scan, the displayed popup should contain all four required signals (authenticity, tampering, freshness, social proof) and the overall trust score.
-**Validates: Requirements 1.4, 2.3**
-
-**Property 4: Visual Recognition Confidence Display**
-*For any* product identified through visual recognition, the results should include a confidence level value between 0 and 1.
+**Property 2: Competitor Discovery**
+*For any* product with available competitors, the Price_Monitor should identify at least 3 competitors when they exist in the marketplace.
 **Validates: Requirements 1.5**
 
-### Trust Score Calculation Properties
+**Property 3: Price Change Alert Generation**
+*For any* competitor price change exceeding 5%, the system should generate an alert with the correct change percentage and competitor information.
+**Validates: Requirements 1.3**
 
-**Property 5: Trust Score Weighted Calculation**
-*For any* set of signal values, the calculated trust score should equal the weighted sum: (authenticity × 0.30) + (tampering × 0.30) + (freshness × 0.25) + (socialProof × 0.15), normalized to 0-100 scale.
+**Property 4: API Failure Handling**
+*For any* marketplace API failure, the Price_Monitor should log the error and schedule a retry attempt.
+**Validates: Requirements 1.6**
+
+### Price Statistics and Analysis Properties
+
+**Property 5: Price Statistics Calculation**
+*For any* collection of competitor prices, the calculated average, minimum, and maximum should correctly reflect the statistical properties of the dataset (min ≤ avg ≤ max, min and max are actual values in the dataset).
 **Validates: Requirements 2.1**
 
-**Property 6: Trust Score Color Mapping**
-*For any* trust score value, the color indicator should be green for scores 80-100, yellow for 50-79, and red for 0-49.
-**Validates: Requirements 2.2**
+**Property 6: Volatility Calculation**
+*For any* price series, the calculated volatility should equal the standard deviation of prices in that series.
+**Validates: Requirements 2.4**
 
-**Property 7: Low Trust Score Warning**
-*For any* product with trust score below 50, the display should include a prominent warning message.
+**Property 7: Trend Classification Completeness**
+*For any* detected price trend, the classification should be exactly one of: increasing, decreasing, stable, or volatile.
+**Validates: Requirements 2.3**
+
+**Property 8: Timestamp Preservation**
+*For any* price record, the timestamp displayed should match the timestamp when the price was recorded (minute-level accuracy).
 **Validates: Requirements 2.5**
 
-**Property 8: Missing Data Indication**
-*For any* trust score calculation with insufficient data for one or more signals, the system should explicitly indicate which signals are unavailable and provide a reason.
-**Validates: Requirements 2.6**
+### Pricing Engine Properties
 
-### Authenticity Verification Properties
+**Property 9: Profit Margin Constraint**
+*For any* pricing recommendation with a minimum profit margin constraint, the recommended price should never result in a profit margin below the specified minimum.
+**Validates: Requirements 3.2**
 
-**Property 9: Verification Method Cascade**
-*For any* product scan, the authenticity verification should attempt methods in order: manufacturer database → blockchain records → visual comparison, stopping at the first successful verification.
-**Validates: Requirements 3.1, 3.2, 3.3**
+**Property 10: Competitive Strategy Bounds**
+*For any* pricing recommendation using competitive strategy, the recommended price should be within 5% of the median competitor price.
+**Validates: Requirements 3.3**
 
-**Property 10: Counterfeit Flagging and Notification**
-*For any* product identified as counterfeit, the system should both flag the product in the database and trigger a notification to relevant authorities.
+**Property 11: Premium Strategy Bounds**
+*For any* pricing recommendation using premium strategy, the recommended price should be between 10% and 20% above the median competitor price.
 **Validates: Requirements 3.4**
 
-**Property 11: Confidence Level Display**
-*For any* completed authenticity verification, the result should include a confidence level (high/medium/low) alongside the authenticity status.
-**Validates: Requirements 3.5**
+**Property 12: Inventory-Based Price Adjustment**
+*For any* pricing recommendation, when inventory is below 20% of average, the recommended price should be higher than the base recommendation, and when inventory exceeds 150% of average, the recommended price should be lower than the base recommendation.
+**Validates: Requirements 3.6, 3.7**
 
-**Property 12: Serial Number Duplication Detection**
-*For any* serial number, if scans occur in locations more than 50km apart within a 24-hour window, the fraud detector should flag potential cloning.
-**Validates: Requirements 3.6**
+**Property 13: Pricing Factor Consideration**
+*For any* pricing recommendation, the calculation should incorporate all required factors: competitor prices, historical sales data, demand patterns, inventory levels, and profit margin targets (each factor should have measurable influence on the result).
+**Validates: Requirements 3.1**
 
-### Tampering Detection Properties
+### Price Elasticity Properties
 
-**Property 13: Tampering Analysis Execution**
-*For any* product scan with packaging images, the tampering detector should perform analysis checking for all four indicators: broken seals, misaligned labels, adhesive residue, and box deformation.
-**Validates: Requirements 4.1, 4.2**
+**Property 14: Elasticity Formula Correctness**
+*For any* historical price and quantity data, the calculated price elasticity should equal (% change in quantity demanded) / (% change in price).
+**Validates: Requirements 4.2**
 
-**Property 14: Confidence-Based Tampering Display**
-*For any* tampering analysis result, the display status should be: "Opened/Resealed" with evidence for confidence >80%, "Possible Tampering" with inspection recommendation for confidence 50-80%, and "Intact" for confidence <50%.
-**Validates: Requirements 4.3, 4.4, 4.5**
+**Property 15: Elasticity Classification**
+*For any* calculated price elasticity value, if elasticity < -1 then classification should be "elastic", and if -1 ≤ elasticity ≤ 0 then classification should be "inelastic".
+**Validates: Requirements 4.3, 4.4**
 
-**Property 15: Tampering Feedback Collection**
-*For any* user-reported false positive or false negative on tampering detection, the system should store the feedback with the associated scan ID and product ID for model improvement.
-**Validates: Requirements 4.6**
+**Property 16: Elasticity Confidence Intervals**
+*For any* price elasticity calculation, the output should include confidence intervals based on the quality and quantity of input data.
+**Validates: Requirements 4.5**
 
-### Freshness Analysis Properties
+### Demand Forecasting Properties
 
-**Property 16: Date Extraction**
-*For any* product with visible manufacturing or expiry dates on packaging, the freshness analyzer should extract these dates using OCR or retrieve them from product data.
-**Validates: Requirements 5.1**
-
-**Property 17: Category-Specific Freshness Calculation**
-*For any* two products in different categories with identical manufacturing dates, the freshness calculations should use category-specific factors (electronics: warranty, FMCG: shelf life, medicine: stability).
+**Property 17: Forecast Horizon Completeness**
+*For any* demand forecast, the output should include predictions for exactly three horizons: 7-day, 14-day, and 30-day.
 **Validates: Requirements 5.2**
 
-**Property 18: Storage Condition Integration**
-*For any* product with available storage condition data (temperature logs, humidity), the freshness score should be adjusted based on these environmental factors compared to optimal storage conditions.
+**Property 18: Historical Data Requirement**
+*For any* demand forecast, the calculation should use at least 90 days of historical sales data when available.
+**Validates: Requirements 5.1**
+
+**Property 19: Seasonality Incorporation**
+*For any* demand forecast where seasonal patterns are detected, the forecast values should differ from non-seasonal forecasts, reflecting the seasonal adjustment.
 **Validates: Requirements 5.3**
 
+**Property 20: External Event Adjustment**
+*For any* demand forecast with configured external events, the forecast values during event periods should be adjusted by the event impact multiplier.
+**Validates: Requirements 5.4**
 
+**Property 21: Forecast Accuracy Calculation**
+*For any* completed forecast period with actual sales data, the system should calculate and store forecast accuracy metrics (MAE, MAPE).
+**Validates: Requirements 5.6**
+
+### Inventory Optimization Properties
+
+**Property 22: Reorder Alert Generation**
+*For any* product where current inventory falls below the calculated reorder point, the system should generate a restock alert.
+**Validates: Requirements 6.1**
+
+**Property 23: Reorder Point Factors**
+*For any* reorder point calculation, the result should incorporate demand forecast, lead time, and safety stock requirements (each factor should influence the result).
+**Validates: Requirements 6.2**
+
+**Property 24: Economic Order Quantity**
+*For any* order quantity recommendation, the recommended quantity should minimize total cost (holding costs + ordering costs) compared to alternative quantities.
+**Validates: Requirements 6.3**
+
+**Property 25: Stockout Alert Priority**
+*For any* stockout prediction within 7 days, the generated alert should have "high" priority.
+**Validates: Requirements 6.4**
+
+**Property 26: Safety Stock Formula**
+*For any* safety stock calculation, the result should equal 1.65 times the standard deviation of demand during lead time.
+**Validates: Requirements 6.5**
+
+### Dashboard and Analytics Properties
+
+**Property 27: Dashboard Data Completeness**
+*For any* monitored SKU, the dashboard data should include all required fields: current price, competitor prices, profit margin, and inventory level.
+**Validates: Requirements 7.2**
+
+**Property 28: Percentage Change Calculation**
+*For any* metric displayed with percentage change, the calculation should correctly reflect the change compared to the 7-day prior period: ((current - previous) / previous) × 100.
+**Validates: Requirements 7.3**
+
+**Property 29: Filter Correctness**
+*For any* dashboard filter applied (marketplace, category, or date range), the filtered results should only include items matching all active filter criteria.
+**Validates: Requirements 7.4**
+
+**Property 30: Price Position Calculation**
+*For any* seller price compared to competitor prices, the position should be correctly classified as "lowest" (price ≤ all competitors), "highest" (price ≥ all competitors), or "median" (otherwise).
+**Validates: Requirements 7.5**
+
+### Alert System Properties
+
+**Property 31: Price Undercut Alert**
+*For any* competitor price that undercuts the seller's price by more than 10%, the system should generate an alert with severity at least "medium".
+**Validates: Requirements 8.1**
+
+**Property 32: Margin Alert Generation**
+*For any* product where profit margin falls below the seller's configured threshold, the system should generate a margin alert.
+**Validates: Requirements 8.2**
+
+**Property 33: Stockout Risk Alert**
+*For any* demand forecast indicating stockout risk, the system should generate an inventory alert.
+**Validates: Requirements 8.3**
+
+**Property 34: Pricing Opportunity Alert**
+*For any* competitor price increase of 5% or more, the system should generate a pricing opportunity alert.
+**Validates: Requirements 8.4**
+
+**Property 35: Alert Channel Routing**
+*For any* generated alert, the delivery channels should match the seller's configured alert preferences (email, SMS, webhook, or dashboard).
+**Validates: Requirements 8.5**
+
+**Property 36: Insight Prioritization**
+*For any* collection of generated insights, they should be ordered by descending potential revenue impact.
+**Validates: Requirements 8.6**
+
+### API Integration Properties
+
+**Property 37: Retry Logic**
+*For any* failed API request (marketplace or webhook), the system should retry exactly the configured number of times (3 for marketplace APIs, 5 for webhooks) before logging a final error.
+**Validates: Requirements 9.4, 12.3**
+
+**Property 38: Token Refresh**
+*For any* authentication token approaching expiration (within 5 minutes), the system should automatically refresh the token before it expires.
+**Validates: Requirements 9.5**
+
+**Property 39: Credential Encryption Round-Trip**
+*For any* API credentials stored in the system, encrypting then decrypting should produce the original credentials (round-trip property).
+**Validates: Requirements 9.6, 14.2**
+
+**Property 40: Rate Limit Backoff**
+*For any* API rate limit response, the system should implement exponential backoff with increasing delays between retry attempts.
+**Validates: Requirements 9.3**
+
+### Price Update Workflow Properties
+
+**Property 41: Auto-Update Workflow**
+*For any* seller with automatic price updates enabled, pricing recommendations should be applied immediately without entering an approval queue.
+**Validates: Requirements 10.1**
+
+**Property 42: Manual Approval Workflow**
+*For any* seller with manual approval required, pricing recommendations should be queued and not applied until explicitly approved.
+**Validates: Requirements 10.2**
+
+**Property 43: Update Failure Handling**
+*For any* failed price update, the system should log the error with details and generate a notification to the seller.
+**Validates: Requirements 10.5**
+
+**Property 44: Audit Log Completeness**
+*For any* price change or webhook delivery, the audit log should contain a record with timestamp, action type, result, and reason/payload.
+**Validates: Requirements 10.6, 12.5**
+
+### Reporting and Export Properties
+
+**Property 45: Export Format Round-Trip**
+*For any* data exported to CSV or Excel format, importing the exported file should produce equivalent data (round-trip property for structured formats).
+**Validates: Requirements 11.1**
+
+**Property 46: Report Completeness**
+*For any* generated report, it should include all required sections: pricing history, sales data, competitor analysis, and forecast data.
+**Validates: Requirements 11.2**
+
+### Webhook Properties
+
+**Property 47: Webhook Delivery**
+*For any* webhook event, the system should send an HTTP POST request to the configured endpoint with the event payload.
+**Validates: Requirements 12.2**
+
+**Property 48: HMAC Signature Verification**
+*For any* webhook payload with HMAC signature, verifying the signature with the shared secret should confirm payload authenticity (round-trip property).
+**Validates: Requirements 12.4**
+
+### Access Control Properties
+
+**Property 49: Role-Based Access Control**
+*For any* user action, the system should grant or deny access based on the user's role: Admin has full access, Manager has read/write access to data and approvals, Viewer has read-only access.
+**Validates: Requirements 13.2, 13.3, 13.4**
+
+**Property 50: Unauthorized Access Logging**
+*For any* unauthorized action attempt, the system should deny access and create an audit log entry with user ID, attempted action, and timestamp.
+**Validates: Requirements 13.5**
+
+### Security Properties
+
+**Property 51: Password Validation**
+*For any* password input, the system should reject passwords that don't meet requirements: minimum 12 characters with at least one uppercase, one lowercase, one number, and one symbol.
+**Validates: Requirements 14.3**
 
 ## Error Handling
 
-### Error Categories and Strategies
+### Error Categories
 
-#### 1. Scan Failures
+**1. External API Errors**
+- Marketplace API failures (rate limits, timeouts, authentication errors)
+- Network connectivity issues
+- Invalid API responses
 
-**Scenarios:**
-- QR code unreadable (damaged, poor lighting, motion blur)
-- Visual recognition fails to identify product
-- Network timeout during product data retrieval
+**Error Handling Strategy:**
+- Implement exponential backoff with jitter for retries
+- Log all API errors with request/response details
+- Degrade gracefully (use cached data when available)
+- Alert users when critical integrations fail
 
-**Handling Strategy:**
-- Retry up to 3 times with user guidance (improve lighting, hold steady)
-- After 3 failures, offer manual product entry or issue reporting
-- Cache recently scanned products for offline retry
-- Log failure reasons for analytics and model improvement
+**2. Data Validation Errors**
+- Invalid price data (negative prices, missing fields)
+- Malformed forecast inputs
+- Invalid user configurations
 
-**Implementation:**
+**Error Handling Strategy:**
+- Validate all inputs at service boundaries
+- Return descriptive error messages
+- Log validation failures for monitoring
+- Reject invalid data early in the pipeline
+
+**3. Business Logic Errors**
+- Insufficient data for forecasting
+- Conflicting pricing constraints
+- Invalid pricing strategies
+
+**Error Handling Strategy:**
+- Provide clear error messages explaining the issue
+- Suggest corrective actions when possible
+- Log business logic errors for analysis
+- Fail safely (don't apply invalid recommendations)
+
+**4. System Errors**
+- Database connection failures
+- Message queue issues
+- Service unavailability
+
+**Error Handling Strategy:**
+- Implement circuit breakers for dependent services
+- Use health checks and automatic recovery
+- Maintain system observability (metrics, logs, traces)
+- Implement graceful degradation
+
+### Error Response Format
+
+All API errors should follow a consistent format:
+
 ```typescript
-async function handleScanFailure(attempt: number, error: ScanError): Promise<ScanResult> {
-  if (attempt < 3) {
-    return {
-      success: false,
-      retryable: true,
-      guidance: getScanGuidance(error.type),
-      nextAttempt: attempt + 1
-    }
-  }
-  
-  return {
-    success: false,
-    retryable: false,
-    fallbackOptions: ['manual_entry', 'report_issue'],
-    errorLog: logScanFailure(error)
+interface ErrorResponse {
+  error: {
+    code: string
+    message: string
+    details?: Record<string, any>
+    timestamp: Date
+    requestId: string
   }
 }
 ```
 
-#### 2. Data Unavailability
+### Retry Policies
 
-**Scenarios:**
-- Manufacturer database unreachable
-- Product not registered in system
-- Missing expiry date or manufacturing date
-- No storage condition data available
+**Marketplace APIs:**
+- Maximum 3 retries
+- Exponential backoff: 1s, 2s, 4s
+- Retry on: 429 (rate limit), 500, 502, 503, 504
+- Don't retry on: 400, 401, 403, 404
 
-**Handling Strategy:**
-- Gracefully degrade: show available signals, mark unavailable ones as "Unknown"
-- Explain why data is unavailable (e.g., "Manufacturer database offline")
-- Adjust trust score calculation to use only available signals
-- Suggest alternative verification methods when possible
+**Webhooks:**
+- Maximum 5 retries
+- Exponential backoff: 1s, 2s, 4s, 8s, 16s
+- Retry on: timeouts, 5xx errors
+- Don't retry on: 4xx errors (except 429)
 
-**Implementation:**
-```typescript
-function calculateTrustScoreWithMissingData(signals: Partial<Signals>): TrustScore {
-  const availableSignals = Object.keys(signals).filter(k => signals[k] !== undefined)
-  const totalWeight = availableSignals.reduce((sum, key) => sum + WEIGHTS[key], 0)
-  
-  // Renormalize weights for available signals
-  const normalizedWeights = {}
-  availableSignals.forEach(key => {
-    normalizedWeights[key] = WEIGHTS[key] / totalWeight
-  })
-  
-  return {
-    overall: calculateWeightedScore(signals, normalizedWeights),
-    confidence: availableSignals.length / 4, // Reduced confidence with missing data
-    missingSignals: Object.keys(WEIGHTS).filter(k => !availableSignals.includes(k)),
-    explanation: generateMissingDataExplanation(signals)
-  }
-}
-```
-
-#### 3. AI/ML Service Failures
-
-**Scenarios:**
-- AWS Rekognition timeout or error
-- AWS Bedrock rate limit exceeded
-- SageMaker endpoint unavailable
-- Model inference error
-
-**Handling Strategy:**
-- Implement exponential backoff retry for transient failures
-- Fall back to cached results if available (with staleness indicator)
-- Use simpler rule-based logic as ultimate fallback
-- Alert operations team for persistent failures
-- Maintain service health dashboard
-
-**Implementation:**
-```typescript
-async function callAIServiceWithFallback<T>(
-  primaryService: () => Promise<T>,
-  fallbackService: () => Promise<T>,
-  cacheKey: string
-): Promise<T> {
-  try {
-    return await retryWithBackoff(primaryService, { maxRetries: 3, baseDelay: 1000 })
-  } catch (primaryError) {
-    logger.warn('Primary AI service failed', { error: primaryError, cacheKey })
-    
-    // Try cache
-    const cached = await getFromCache(cacheKey)
-    if (cached && !isTooStale(cached)) {
-      return { ...cached.data, fromCache: true, cachedAt: cached.timestamp }
-    }
-    
-    // Try fallback
-    try {
-      return await fallbackService()
-    } catch (fallbackError) {
-      logger.error('All AI services failed', { primaryError, fallbackError })
-      throw new AIServiceUnavailableError('Unable to process request')
-    }
-  }
-}
-```
-
-#### 4. Data Consistency Errors
-
-**Scenarios:**
-- Conflicting product information from multiple sources
-- Serial number exists but doesn't match product details
-- Custody chain gaps or inconsistencies
-- Price anomalies (too high or too low)
-
-**Handling Strategy:**
-- Flag inconsistencies prominently to users
-- Use confidence scoring to weight conflicting sources
-- Trigger manual review for critical inconsistencies
-- Log all conflicts for data quality improvement
-- Provide transparency about conflicting information
-
-**Implementation:**
-```typescript
-function resolveConflictingData(sources: DataSource[]): ResolvedData {
-  const conflicts = detectConflicts(sources)
-  
-  if (conflicts.length === 0) {
-    return { data: mergeData(sources), confidence: 1.0, conflicts: [] }
-  }
-  
-  // Weight sources by reliability
-  const weighted = sources.map(s => ({
-    ...s,
-    weight: getSourceReliability(s.type)
-  }))
-  
-  const resolved = weightedMerge(weighted)
-  
-  return {
-    data: resolved,
-    confidence: calculateConfidence(conflicts, weighted),
-    conflicts: conflicts.map(c => ({
-      field: c.field,
-      values: c.values,
-      resolution: c.resolvedValue,
-      explanation: explainResolution(c)
-    }))
-  }
-}
-```
-
-#### 5. Rate Limiting and Quota Management
-
-**Scenarios:**
-- Too many scans from single user (potential abuse)
-- AWS service quotas exceeded
-- Database throttling under high load
-- API rate limits reached
-
-**Handling Strategy:**
-- Implement per-user rate limiting (e.g., 100 scans/hour)
-- Use exponential backoff for throttled requests
-- Queue non-urgent operations (analytics, batch processing)
-- Scale Lambda concurrency and DynamoDB capacity automatically
-- Provide clear feedback to users about rate limits
-
-**Implementation:**
-```typescript
-async function checkRateLimit(userId: string, action: string): Promise<RateLimitResult> {
-  const key = `ratelimit:${userId}:${action}`
-  const limit = RATE_LIMITS[action]
-  
-  const current = await redis.incr(key)
-  if (current === 1) {
-    await redis.expire(key, limit.window)
-  }
-  
-  if (current > limit.max) {
-    return {
-      allowed: false,
-      retryAfter: await redis.ttl(key),
-      message: `Rate limit exceeded. Please try again in ${await redis.ttl(key)} seconds.`
-    }
-  }
-  
-  return {
-    allowed: true,
-    remaining: limit.max - current,
-    resetAt: Date.now() + (await redis.ttl(key)) * 1000
-  }
-}
-```
-
-#### 6. Security and Privacy Errors
-
-**Scenarios:**
-- Unauthorized access attempts
-- Data breach detection
-- PII exposure in logs or responses
-- Malicious input (SQL injection, XSS attempts)
-
-**Handling Strategy:**
-- Validate and sanitize all inputs
-- Implement authentication and authorization checks
-- Encrypt sensitive data at rest and in transit
-- Monitor for suspicious patterns and block malicious actors
-- Comply with GDPR, CCPA, and Indian data protection laws
-- Incident response plan for security breaches
-
-**Implementation:**
-```typescript
-function validateAndSanitizeInput(input: any, schema: Schema): ValidatedInput {
-  // Input validation
-  const validation = schema.validate(input)
-  if (!validation.valid) {
-    throw new ValidationError(validation.errors)
-  }
-  
-  // Sanitization
-  const sanitized = {
-    ...input,
-    // Remove potential XSS
-    textFields: Object.keys(input)
-      .filter(k => typeof input[k] === 'string')
-      .reduce((acc, k) => ({
-        ...acc,
-        [k]: sanitizeHtml(input[k])
-      }), {}),
-    // Mask PII in logs
-    _logSafe: maskPII(input)
-  }
-  
-  return sanitized
-}
-```
-
-
+**Internal Services:**
+- Maximum 2 retries
+- Linear backoff: 500ms, 1s
+- Use circuit breakers to prevent cascade failures
 
 ## Testing Strategy
 
 ### Dual Testing Approach
 
-TrustScan AI requires comprehensive testing using both unit tests and property-based tests. These approaches are complementary:
+Dukaan AI requires both unit testing and property-based testing to ensure comprehensive coverage:
 
-- **Unit tests** verify specific examples, edge cases, and error conditions
-- **Property tests** verify universal properties across all inputs through randomization
-- Together they provide comprehensive coverage: unit tests catch concrete bugs, property tests verify general correctness
+**Unit Tests** focus on:
+- Specific examples demonstrating correct behavior
+- Edge cases (empty datasets, boundary values, null handling)
+- Error conditions and exception handling
+- Integration points between components
+- Mock external dependencies (marketplace APIs)
 
-### Property-Based Testing Framework
+**Property-Based Tests** focus on:
+- Universal properties that hold for all inputs
+- Comprehensive input coverage through randomization
+- Invariants that must be maintained
+- Round-trip properties (encryption/decryption, serialization)
+- Mathematical correctness (formulas, calculations)
 
-**Framework Selection:** 
-- **TypeScript/JavaScript**: fast-check
-- **Python** (for ML models): Hypothesis
+Both approaches are complementary and necessary. Unit tests catch concrete bugs and validate specific scenarios, while property tests verify general correctness across a wide input space.
 
-**Configuration:**
+### Property-Based Testing Configuration
+
+**Testing Library:** Use `fast-check` for TypeScript/JavaScript implementation
+
+**Test Configuration:**
 - Minimum 100 iterations per property test (due to randomization)
-- Each property test must reference its design document property
-- Tag format: `Feature: trustscan-ai, Property {number}: {property_text}`
+- Increase to 1000 iterations for critical properties (pricing, forecasting)
+- Use shrinking to find minimal failing examples
+- Seed tests for reproducibility in CI/CD
 
-### Testing Layers
+**Property Test Structure:**
 
-#### 1. Component Unit Tests
+Each property test must:
+1. Reference the design document property number
+2. Use the tag format: `Feature: Dukaan AI, Property {number}: {property_text}`
+3. Generate random inputs covering the full input space
+4. Assert the property holds for all generated inputs
+5. Include edge cases in the generator (empty, zero, negative, extreme values)
 
-**QR Scanner Component:**
+**Example Property Test:**
+
 ```typescript
-describe('QR Scanner', () => {
-  it('should decode valid manufacturer QR codes', () => {
-    const qrData = generateManufacturerQR('PROD-12345')
-    const result = qrScanner.scanQRCode(qrData)
-    expect(result.success).toBe(true)
-    expect(result.productId).toBe('PROD-12345')
-    expect(result.qrType).toBe('manufacturer')
-  })
-  
-  it('should handle damaged QR codes gracefully', () => {
-    const damagedQR = corruptQRCode(generateManufacturerQR('PROD-12345'))
-    const result = qrScanner.scanQRCode(damagedQR)
-    expect(result.success).toBe(false)
-    expect(result.retryable).toBe(true)
-  })
-  
-  it('should trigger visual recognition after QR failure', async () => {
-    const productImage = loadTestImage('product-no-qr.jpg')
-    const result = await qrScanner.triggerVisualRecognition(productImage)
-    expect(result.confidence).toBeGreaterThan(0)
-    expect(result.productId).toBeDefined()
-  })
-})
+// Feature: Dukaan AI, Property 9: Profit Margin Constraint
+test('pricing recommendations respect minimum profit margin', () => {
+  fc.assert(
+    fc.property(
+      fc.record({
+        cost: fc.float({ min: 1, max: 1000 }),
+        minMargin: fc.float({ min: 0.1, max: 0.5 }),
+        competitorPrices: fc.array(fc.float({ min: 10, max: 2000 }), { minLength: 1 }),
+        inventory: fc.nat({ max: 1000 }),
+        avgInventory: fc.nat({ min: 1, max: 1000 })
+      }),
+      async (input) => {
+        const recommendation = await pricingEngine.generateRecommendation({
+          productId: 'test-product',
+          currentPrice: input.cost * 1.5,
+          cost: input.cost,
+          minProfitMargin: input.minMargin,
+          strategy: { type: 'competitive', parameters: {} },
+          inventoryLevel: input.inventory,
+          averageInventory: input.avgInventory
+        });
+        
+        const actualMargin = (recommendation.recommendedPrice - input.cost) / recommendation.recommendedPrice;
+        expect(actualMargin).toBeGreaterThanOrEqual(input.minMargin);
+      }
+    ),
+    { numRuns: 100 }
+  );
+});
 ```
 
-**Trust Score Calculator:**
-```typescript
-describe('Trust Score Calculator', () => {
-  it('should calculate weighted average correctly', () => {
-    const signals = {
-      authenticity: 90,
-      tampering: 80,
-      freshness: 70,
-      socialProof: 60
-    }
-    const score = calculator.calculateTrustScore('PROD-123', signals)
-    // 90*0.3 + 80*0.3 + 70*0.25 + 60*0.15 = 27 + 24 + 17.5 + 9 = 77.5
-    expect(score.overall).toBe(77.5)
-  })
-  
-  it('should handle missing signals gracefully', () => {
-    const signals = {
-      authenticity: 90,
-      tampering: 80
-      // freshness and socialProof missing
-    }
-    const score = calculator.calculateTrustScore('PROD-123', signals)
-    expect(score.confidence).toBeLessThan(1.0)
-    expect(score.missingSignals).toContain('freshness')
-    expect(score.missingSignals).toContain('socialProof')
-  })
-})
-```
+### Unit Testing Strategy
 
-#### 2. Property-Based Tests
+**Test Coverage Goals:**
+- Minimum 80% code coverage
+- 100% coverage for critical paths (pricing, forecasting, security)
+- All error handling paths tested
 
-**Property 1: QR Scan Performance**
-```typescript
-import fc from 'fast-check'
+**Unit Test Focus Areas:**
 
-// Feature: trustscan-ai, Property 1: QR Scan Performance
-describe('Property: QR Scan Performance', () => {
-  it('should decode any valid QR code within 2 seconds', async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc.string({ minLength: 10, maxLength: 100 }), // Random product IDs
-        async (productId) => {
-          const qrCode = generateManufacturerQR(productId)
-          const startTime = Date.now()
-          const result = await qrScanner.scanQRCode(qrCode)
-          const duration = Date.now() - startTime
-          
-          expect(result.success).toBe(true)
-          expect(duration).toBeLessThan(2000)
-          expect(result.productId).toBe(productId)
-        }
-      ),
-      { numRuns: 100 }
-    )
-  })
-})
-```
+1. **Price Monitoring:**
+   - Test competitor price retrieval with mocked API responses
+   - Test price change detection with specific examples
+   - Test alert generation for various price change scenarios
+   - Test error handling for API failures
 
-**Property 5: Trust Score Weighted Calculation**
-```typescript
-// Feature: trustscan-ai, Property 5: Trust Score Weighted Calculation
-describe('Property: Trust Score Weighted Calculation', () => {
-  it('should calculate weighted sum correctly for any signal values', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 100 }), // authenticity
-        fc.integer({ min: 0, max: 100 }), // tampering
-        fc.integer({ min: 0, max: 100 }), // freshness
-        fc.integer({ min: 0, max: 100 }), // socialProof
-        (auth, tamp, fresh, social) => {
-          const expected = auth * 0.30 + tamp * 0.30 + fresh * 0.25 + social * 0.15
-          const result = calculator.calculateTrustScore('PROD-TEST', {
-            authenticity: auth,
-            tampering: tamp,
-            freshness: fresh,
-            socialProof: social
-          })
-          
-          expect(result.overall).toBeCloseTo(expected, 2)
-        }
-      ),
-      { numRuns: 100 }
-    )
-  })
-})
-```
+2. **Pricing Engine:**
+   - Test each pricing strategy with known inputs/outputs
+   - Test profit margin enforcement with boundary values
+   - Test inventory adjustment logic
+   - Test constraint conflicts (impossible to satisfy all constraints)
 
-**Property 6: Trust Score Color Mapping**
-```typescript
-// Feature: trustscan-ai, Property 6: Trust Score Color Mapping
-describe('Property: Trust Score Color Mapping', () => {
-  it('should map any trust score to correct color', () => {
-    fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 100 }),
-        (score) => {
-          const color = getColorForScore(score)
-          
-          if (score >= 80) {
-            expect(color).toBe('green')
-          } else if (score >= 50) {
-            expect(color).toBe('yellow')
-          } else {
-            expect(color).toBe('red')
-          }
-        }
-      ),
-      { numRuns: 100 }
-    )
-  })
-})
-```
+3. **Forecast Engine:**
+   - Test forecast generation with synthetic time series
+   - Test seasonality detection with known patterns
+   - Test external event incorporation
+   - Test accuracy calculation with known forecast/actual pairs
 
-**Property 12: Serial Number Duplication Detection**
-```typescript
-// Feature: trustscan-ai, Property 12: Serial Number Duplication Detection
-describe('Property: Serial Number Duplication Detection', () => {
-  it('should flag any serial scanned in distant locations within 24 hours', async () => {
-    await fc.assert(
-      fc.asyncProperty(
-        fc.string({ minLength: 8, maxLength: 20 }), // serial number
-        fc.tuple(fc.double({ min: -90, max: 90 }), fc.double({ min: -180, max: 180 })), // location 1
-        fc.tuple(fc.double({ min: -90, max: 90 }), fc.double({ min: -180, max: 180 })), // location 2
-        async (serial, loc1, loc2) => {
-          const distance = calculateDistance(loc1, loc2)
-          
-          // Only test if locations are >50km apart
-          fc.pre(distance > 50)
-          
-          // Simulate scans
-          await recordScan(serial, loc1, Date.now())
-          await recordScan(serial, loc2, Date.now() + 1000) // 1 second later
-          
-          const alert = await fraudDetector.detectDuplicateSerials(serial)
-          
-          expect(alert.isDuplicate).toBe(true)
-          expect(alert.suspicionLevel).toBeOneOf(['high', 'medium'])
-        }
-      ),
-      { numRuns: 100 }
-    )
-  })
-})
-```
+4. **Inventory Optimizer:**
+   - Test reorder point calculation with known parameters
+   - Test EOQ formula with specific values
+   - Test safety stock calculation
+   - Test stockout prediction logic
 
-#### 3. Integration Tests
+5. **Alert Service:**
+   - Test alert generation rules
+   - Test channel routing based on preferences
+   - Test alert prioritization
+   - Test delivery failure handling
 
-**End-to-End Scan Flow:**
-```typescript
-describe('Integration: Complete Scan Flow', () => {
-  it('should complete full scan workflow from QR to trust score display', async () => {
-    // Setup
-    const product = await createTestProduct({
-      category: 'electronics',
-      hasManufacturerQR: true,
-      isAuthentic: true,
-      isTampered: false
-    })
-    
-    // Execute
-    const qrCode = product.manufacturerQR
-    const scanResult = await scanService.scan(qrCode, testUser.id)
-    
-    // Verify
-    expect(scanResult.success).toBe(true)
-    expect(scanResult.trustScore).toBeDefined()
-    expect(scanResult.trustScore.overall).toBeGreaterThan(70)
-    expect(scanResult.trustScore.signals.authenticity.status).toBe('genuine')
-    expect(scanResult.trustScore.signals.tampering.status).toBe('intact')
-    
-    // Verify database records
-    const scanRecord = await db.getScanRecord(scanResult.scanId)
-    expect(scanRecord.productId).toBe(product.productId)
-    expect(scanRecord.userId).toBe(testUser.id)
-  })
-  
-  it('should handle counterfeit detection and notification', async () => {
-    const counterfeitProduct = await createTestProduct({
-      isAuthentic: false,
-      serialNumber: 'FAKE-12345'
-    })
-    
-    const scanResult = await scanService.scan(counterfeitProduct.qr, testUser.id)
-    
-    expect(scanResult.trustScore.signals.authenticity.status).toBe('suspicious')
-    expect(scanResult.trustScore.overall).toBeLessThan(50)
-    
-    // Verify notification sent
-    const notifications = await getNotifications('authorities')
-    expect(notifications).toContainEqual(
-      expect.objectContaining({
-        type: 'counterfeit_detected',
-        productId: counterfeitProduct.productId
-      })
-    )
-  })
-})
-```
+6. **API Integration:**
+   - Test OAuth flow with mocked responses
+   - Test retry logic with simulated failures
+   - Test rate limiting behavior
+   - Test token refresh logic
 
-**Store Owner Verification Flow:**
-```typescript
-describe('Integration: Store Owner Stock Verification', () => {
-  it('should verify batch of products and generate report', async () => {
-    const products = await createTestProducts(10, { isAuthentic: true })
-    const store = await createTestStore()
-    
-    const verificationResult = await storeService.verifyBatch(
-      store.storeId,
-      products.map(p => p.productId)
-    )
-    
-    expect(verificationResult.totalItems).toBe(10)
-    expect(verificationResult.passedItems).toBe(10)
-    expect(verificationResult.failedItems).toBe(0)
-    expect(verificationResult.report).toBeDefined()
-    
-    // Verify custody transfer recorded
-    for (const product of products) {
-      const journey = await supplyChainTracker.getProductJourney(product.productId)
-      expect(journey.custodyChain).toContainEqual(
-        expect.objectContaining({
-          toParty: store.storeId,
-          verificationStatus: 'verified'
-        })
-      )
-    }
-  })
-})
-```
+7. **Access Control:**
+   - Test role-based permissions for each role
+   - Test unauthorized access denial
+   - Test audit logging for all actions
 
-#### 4. ML Model Tests
+### Integration Testing
 
-**Tampering Detection Model:**
-```python
-import hypothesis as hp
-from hypothesis import given, strategies as st
+**Integration Test Scope:**
+- End-to-end workflows (product monitoring → price recommendation → update)
+- Service-to-service communication via message queue
+- Database operations and transactions
+- External API integration (using sandbox/test environments)
 
-# Feature: trustscan-ai, Property 13: Tampering Analysis Execution
-@given(st.binary(min_size=1000, max_size=100000))  # Random image data
-def test_tampering_detector_always_returns_result(image_data):
-    """For any image input, tampering detector should return a valid result"""
-    result = tampering_detector.analyze(image_data)
-    
-    assert result is not None
-    assert 'tampered' in result
-    assert 'confidence' in result
-    assert 0 <= result['confidence'] <= 1
-    assert 'indicators' in result
-    assert isinstance(result['indicators'], list)
-```
+**Key Integration Tests:**
+1. Complete price monitoring workflow
+2. Pricing recommendation generation with real data
+3. Forecast generation and accuracy tracking
+4. Alert generation and delivery
+5. Price update approval and execution
+6. Report generation and export
 
-**Demand Forecasting Model:**
-```python
-@given(
-    st.lists(st.floats(min_value=0, max_value=1000), min_size=30, max_size=365),  # Historical demand
-    st.integers(min_value=1, max_value=90)  # Forecast horizon
-)
-def test_demand_forecast_properties(historical_demand, horizon):
-    """For any historical demand data, forecast should have valid properties"""
-    forecast = demand_forecaster.forecast(historical_demand, horizon)
-    
-    # Forecast length matches horizon
-    assert len(forecast.predictions) == horizon
-    
-    # All predictions are non-negative
-    assert all(p.predicted_demand >= 0 for p in forecast.predictions)
-    
-    # Confidence intervals are valid
-    for pred in forecast.predictions:
-        assert pred.confidence_interval.lower <= pred.predicted_demand
-        assert pred.predicted_demand <= pred.confidence_interval.upper
-```
+### Performance Testing
 
-#### 5. Performance Tests
+**Performance Benchmarks:**
+- Dashboard load time: < 2 seconds
+- Pricing recommendation: < 5 seconds per SKU
+- Demand forecast: < 10 seconds per SKU
+- API response time: < 500ms (p95)
 
 **Load Testing:**
-```typescript
-describe('Performance: Concurrent Scans', () => {
-  it('should handle 10,000 concurrent scans within 5 seconds', async () => {
-    const products = await createTestProducts(100)
-    const users = await createTestUsers(1000)
-    
-    const scanPromises = []
-    for (let i = 0; i < 10000; i++) {
-      const product = products[i % products.length]
-      const user = users[i % users.length]
-      scanPromises.push(scanService.scan(product.qr, user.id))
-    }
-    
-    const startTime = Date.now()
-    const results = await Promise.all(scanPromises)
-    const duration = Date.now() - startTime
-    
-    expect(duration).toBeLessThan(5000)
-    expect(results.filter(r => r.success).length).toBeGreaterThan(9500) // 95% success rate
-  })
-})
-```
+- Test with 100 concurrent users
+- Test with 1000 monitored products
+- Test with 90 days of historical data per product
+- Measure resource utilization and identify bottlenecks
 
-### Test Coverage Goals
+### Security Testing
 
-- **Unit Test Coverage**: >80% code coverage
-- **Property Test Coverage**: All 18 correctness properties implemented
-- **Integration Test Coverage**: All critical user flows (scan, verify, alert, marketplace)
-- **Performance Test Coverage**: All performance-critical paths (scan, trust score calculation, AI inference)
-- **Security Test Coverage**: All authentication, authorization, and input validation paths
+**Security Test Areas:**
+1. Authentication and authorization
+2. Input validation and sanitization
+3. Encryption (data at rest and in transit)
+4. API credential security
+5. SQL injection prevention
+6. XSS prevention
+7. CSRF protection
+8. Rate limiting
 
-### Continuous Testing
+**Tools:**
+- OWASP ZAP for vulnerability scanning
+- Penetration testing for critical paths
+- Dependency scanning for known vulnerabilities
 
-- Run unit tests on every commit
-- Run property tests on every pull request
-- Run integration tests nightly
-- Run performance tests weekly
-- Run security scans daily
-- Monitor production errors and create regression tests
+### Continuous Integration
 
+**CI/CD Pipeline:**
+1. Run unit tests on every commit
+2. Run property tests on every commit
+3. Run integration tests on pull requests
+4. Run security scans on pull requests
+5. Deploy to staging on merge to main
+6. Run smoke tests in staging
+7. Deploy to production with approval
+
+**Test Execution Time:**
+- Unit tests: < 5 minutes
+- Property tests: < 10 minutes
+- Integration tests: < 15 minutes
+- Total CI pipeline: < 30 minutes
